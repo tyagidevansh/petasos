@@ -1,0 +1,76 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Folder {
+  id        String   @id @default(uuid())
+  name      String
+  parentId  String?
+  parent    Folder?  @relation("SubFolders", fields: [parentId], references: [id], onDelete: Cascade)
+  children  Folder[] @relation("SubFolders")
+  requests  Request[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Request {
+  id            String   @id @default(uuid())
+  name          String
+  method        String
+  url           String?
+  body          String? // JSON string
+  folderId      String
+  folder        Folder   @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  headers       Header[]
+  queryParams   Param[]
+  responseSchema ResponseField[]
+  examples      Example[]
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model Header {
+  id          String  @id @default(uuid())
+  key         String
+  value       String
+  enabled     Boolean @default(true)
+  description String?
+  requestId   String
+  request     Request @relation(fields: [requestId], references: [id], onDelete: Cascade)
+}
+
+model Param {
+  id          String  @id @default(uuid())
+  key         String
+  value       String
+  enabled     Boolean @default(true)
+  description String?
+  requestId   String
+  request     Request @relation(fields: [requestId], references: [id], onDelete: Cascade)
+}
+
+model ResponseField {
+  id          String  @id @default(uuid())
+  name        String
+  type        String
+  required    Boolean @default(false)
+  description String?
+  requestId   String
+  request     Request @relation(fields: [requestId], references: [id], onDelete: Cascade)
+}
+
+model Example {
+  id           String  @id @default(uuid())
+  name         String
+  status       Int
+  responseBody String? // JSON string
+  requestId    String
+  request      Request @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  createdAt    DateTime @default(now())
+}

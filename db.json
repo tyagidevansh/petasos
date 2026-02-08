@@ -1,0 +1,25 @@
+{
+  "folders": [
+    {
+      "id": "root",
+      "name": "My API Collection",
+      "requests": [
+        {
+          "id": "488b8b15-274d-419e-b5b9-c3f36271fd4b",
+          "name": "New Request",
+          "method": "GET",
+          "url": "",
+          "headers": [],
+          "queryParams": [],
+          "examples": []
+        }
+      ]
+    },
+    {
+      "id": "44c9e6ef-d63c-48f5-8036-52bc78d2e188",
+      "name": "New Folder",
+      "requests": [],
+      "subfolders": []
+    }
+  ]
+}
