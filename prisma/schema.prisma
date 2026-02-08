@@ -30,6 +30,7 @@ model Request {
   headers       Header[]
   queryParams   Param[]
   responseSchema ResponseField[]
+  responseModel String? // TypeScript interface or model definition
   examples      Example[]
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt

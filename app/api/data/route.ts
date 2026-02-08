@@ -8,14 +8,8 @@ export async function GET() {
             orderBy: { createdAt: 'asc' }
         });
 
-        // 2. Fetch all requests with relations
+        // 2. Fetch all requests (without heavy relations)
         const allRequests = await prisma.request.findMany({
-            include: {
-                headers: true,
-                queryParams: true,
-                responseSchema: true,
-                examples: true
-            },
             orderBy: { createdAt: 'asc' }
         });
 
@@ -41,14 +35,7 @@ export async function GET() {
                     name: r.name,
                     method: r.method,
                     url: r.url || "",
-                    body: r.body || "",
-                    headers: r.headers,
-                    queryParams: r.queryParams,
-                    responseSchema: r.responseSchema,
-                    examples: r.examples.map(e => ({
-                        ...e,
-                        responseBody: e.responseBody ? JSON.parse(e.responseBody) : null
-                    }))
+                    // Omit heavy fields: body, headers, queryParams, responseSchema, examples
                 });
             }
         });

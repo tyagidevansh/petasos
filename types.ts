@@ -38,11 +38,12 @@ export interface RequestItem {
     name: string;
     method: HttpMethod;
     url: string;
-    headers: Header[];
-    queryParams: Param[];
+    headers?: Header[];
+    queryParams?: Param[];
     body?: string;
     responseSchema?: ResponseField[];
-    examples: SavedExample[];
+    responseModel?: string; // TS interface
+    examples?: SavedExample[];
 }
 
 export interface Folder {
@@ -52,6 +53,21 @@ export interface Folder {
     subfolders: Folder[]; // Support infinite nesting
 }
 
+export interface EnvVariable {
+    id: string;
+    key: string;
+    value: string;
+    description?: string;
+}
+
+export interface Environment {
+    id: string;
+    name: string;
+    variables: EnvVariable[];
+}
+
 export interface DB {
     folders: Folder[];
+    environments?: Environment[];
+    activeEnvironmentId?: string;
 }

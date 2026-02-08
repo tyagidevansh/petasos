@@ -3,8 +3,11 @@
 import * as React from "react";
 import { Sidebar } from "@/components/Sidebar";
 import { RequestEditor } from "@/components/RequestEditor";
-import { DB, Folder, RequestItem } from "@/types";
-import { Loader2 } from "lucide-react";
+import { ImportCurlDialog } from "@/components/ImportCurlDialog";
+import { EnvironmentManager } from "@/components/EnvironmentManager";
+import { DB, Folder, RequestItem, Environment } from "@/types";
+import { Loader2, Zap } from "lucide-react";
+import { exportCollection, importCollection } from "@/lib/curl";
 
 export function AppContent() {
   const [data, setData] = React.useState<DB | null>(null);
@@ -12,12 +15,27 @@ export function AppContent() {
   const [selectedType, setSelectedType] = React.useState<'folder' | 'request' | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
+  
+  // Track dirty state - stores the last saved version of the selected request
+  const [savedRequest, setSavedRequest] = React.useState<RequestItem | null>(null);
+  
+  // Pending navigation (for save/discard prompt)
+  const [pendingNavigation, setPendingNavigation] = React.useState<{ id: string; type: 'folder' | 'request' } | null>(null);
+  
+  // Dialog states
+  const [importCurlOpen, setImportCurlOpen] = React.useState(false);
+  const [importCurlFolderId, setImportCurlFolderId] = React.useState<string>("");
+  const [envManagerOpen, setEnvManagerOpen] = React.useState(false);
 
   // Load data
   React.useEffect(() => {
     fetch('/api/data')
       .then(res => res.json())
       .then(d => {
+        // Ensure environments array exists
+        if (!d.environments) {
+          d.environments = [];
+        }
         setData(d);
         setLoading(false);
       })
@@ -38,6 +56,32 @@ export function AppContent() {
     ? findRequest(data.folders || [], selectedId) 
     : null;
 
+  const activeEnvironment = data?.environments?.find(e => e.id === data.activeEnvironmentId);
+  
+  // Get env vars as key-value object for interpolation
+  const envVars = React.useMemo(() => {
+    if (!activeEnvironment) return {};
+    return activeEnvironment.variables.reduce((acc, v) => {
+      if (v.key) acc[v.key] = v.value;
+      return acc;
+    }, {} as Record<string, string>);
+  }, [activeEnvironment]);
+
+  // Compute dirty state by comparing current request with saved version
+  const isDirty = React.useMemo(() => {
+    if (!selectedRequest || !savedRequest) return false;
+    return JSON.stringify(selectedRequest) !== JSON.stringify(savedRequest);
+  }, [selectedRequest, savedRequest]);
+
+  // Update savedRequest when selection changes
+  React.useEffect(() => {
+    if (selectedRequest) {
+      setSavedRequest(JSON.parse(JSON.stringify(selectedRequest)));
+    } else {
+      setSavedRequest(null);
+    }
+  }, [selectedId]); // Only on ID change, not on every update
+
   // Save request changes
   const handleSaveRequest = async (request: RequestItem) => {
       setSaving(true);
@@ -48,8 +92,8 @@ export function AppContent() {
               body: JSON.stringify(request)
           });
           if (!res.ok) throw new Error("Failed to save");
-          
-          // No need to reload everything, local state is already updated via onChange
+          // Update saved state on successful save
+          setSavedRequest(JSON.parse(JSON.stringify(request)));
       } catch (e) {
           console.error("Save failed", e);
           alert("Failed to save request");
@@ -58,8 +102,30 @@ export function AppContent() {
       }
   };
 
+  // Handle navigation with dirty check
+  const handleSelect = (id: string, type: 'folder' | 'request') => {
+    if (isDirty && selectedRequest) {
+      setPendingNavigation({ id, type });
+      // Show confirmation dialog
+      const confirmLeave = confirm("You have unsaved changes. Do you want to save before leaving?");
+      if (confirmLeave) {
+        handleSaveRequest(selectedRequest).then(() => {
+          setSelectedId(id);
+          setSelectedType(type);
+        });
+      } else {
+        // Discard changes - proceed anyway
+        setSelectedId(id);
+        setSelectedType(type);
+      }
+      setPendingNavigation(null);
+    } else {
+      setSelectedId(id);
+      setSelectedType(type);
+    }
+  };
+
   const handleUpdateRequest = (updated: RequestItem) => {
-      // Optimistic update
       setData(d => {
           if (!d) return null;
           const updateInFolders = (folders: Folder[]): Folder[] => {
@@ -85,7 +151,6 @@ export function AppContent() {
           });
           if (!res.ok) throw new Error("Failed to create folder");
 
-          // Update local state
           const newFolder: Folder = { id, name, requests: [], subfolders: [] };
           setData(d => {
             if (!d) return { folders: [newFolder] };
@@ -232,35 +297,270 @@ export function AppContent() {
       }
   };
 
+  const handleMoveRequest = async (requestId: string, targetFolderId: string) => {
+    const request = findRequest(data?.folders || [], requestId);
+    if (!request) return;
+
+    setData(prev => {
+        if (!prev) return null;
+        
+        let movedRequest: RequestItem | null = null;
+
+        const removeReq = (folders: Folder[]): Folder[] => {
+            return folders.map(f => {
+                const found = f.requests.find(r => r.id === requestId);
+                if (found) {
+                    movedRequest = found;
+                    return { ...f, requests: f.requests.filter(r => r.id !== requestId), subfolders: removeReq(f.subfolders) };
+                }
+                return { ...f, subfolders: removeReq(f.subfolders) };
+            });
+        };
+        
+        const foldersAfterRemove = removeReq(prev.folders);
+
+        if (!movedRequest) return prev;
+
+        const addReq = (folders: Folder[]): Folder[] => {
+            return folders.map(f => {
+                if (f.id === targetFolderId) {
+                    return { ...f, requests: [...f.requests, movedRequest!], subfolders: addReq(f.subfolders) };
+                }
+                return { ...f, subfolders: addReq(f.subfolders) };
+            });
+        };
+
+        return { ...prev, folders: addReq(foldersAfterRemove) };
+    });
+
+    try {
+        const res = await fetch('/api/requests', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...request, folderId: targetFolderId })
+        });
+        
+        if (!res.ok) throw new Error("Move failed");
+        
+    } catch (e) {
+        console.error("Move failed", e);
+        alert("Failed to move request");
+        window.location.reload();
+    }
+  };
+
+  // Import cURL handler
+  const handleImportCurl = (folderId: string) => {
+    setImportCurlFolderId(folderId);
+    setImportCurlOpen(true);
+  };
+
+  const handleCurlImported = async (parsedRequest: Partial<RequestItem>, name: string) => {
+    const id = crypto.randomUUID();
+    const newRequest: RequestItem = {
+      id,
+      name,
+      method: parsedRequest.method || 'GET',
+      url: parsedRequest.url || '',
+      headers: parsedRequest.headers || [],
+      queryParams: parsedRequest.queryParams || [],
+      body: parsedRequest.body,
+      examples: [],
+    };
+
+    try {
+      const res = await fetch('/api/requests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...newRequest, folderId: importCurlFolderId })
+      });
+      if (!res.ok) throw new Error("Failed to create request");
+
+      setData(d => {
+        if (!d) return null;
+        const addToFolder = (folders: Folder[]): Folder[] => {
+          return (folders || []).map(f => {
+            if (f.id === importCurlFolderId) {
+              return { ...f, requests: [...(f.requests || []), newRequest] };
+            }
+            return { ...f, subfolders: addToFolder(f.subfolders || []) };
+          });
+        };
+        return { ...d, folders: addToFolder(d.folders || []) };
+      });
+      setSelectedId(newRequest.id);
+      setSelectedType('request');
+    } catch (e) {
+      console.error(e);
+      alert("Failed to import request");
+    }
+  };
+
+  // Export collection
+  const handleExport = () => {
+    if (!data) return;
+    const json = exportCollection(data.folders);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `petasos-collection-${new Date().toISOString().split('T')[0]}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Import collection
+  const handleImport = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    input.onchange = async (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (!file) return;
+      
+      try {
+        const text = await file.text();
+        const importedFolders = importCollection(text);
+        
+        // Add to existing data
+        setData(d => {
+          if (!d) return { folders: importedFolders };
+          return { ...d, folders: [...d.folders, ...importedFolders] };
+        });
+
+        // TODO: Also persist to backend
+        alert(`Successfully imported ${importedFolders.length} folder(s)!`);
+      } catch (e: any) {
+        alert(e.message || "Failed to import collection");
+      }
+    };
+    input.click();
+  };
+
+  // Environment handlers
+  const handleUpdateEnvironments = (environments: Environment[]) => {
+    setData(d => d ? { ...d, environments } : null);
+    // TODO: Persist to backend
+  };
+
+  const handleSetActiveEnvironment = (id: string | null) => {
+    setData(d => d ? { ...d, activeEnvironmentId: id || undefined } : null);
+    // TODO: Persist to backend
+  };
+
+  // Lazy load request details
+  const isRequestLoaded = React.useMemo(() => {
+    return selectedRequest && selectedRequest.headers !== undefined;
+  }, [selectedRequest]);
+
+  React.useEffect(() => {
+    if (selectedType === 'request' && selectedId && selectedRequest && !isRequestLoaded) {
+      const controller = new AbortController();
+      
+      fetch(`/api/requests/${selectedId}`, { signal: controller.signal })
+        .then(res => {
+            if (!res.ok) throw new Error("Failed to load request");
+            return res.json();
+        })
+        .then(fullReq => {
+            handleUpdateRequest(fullReq);
+            // Update saved state to match fetched data, preventing false "dirty" state
+            setSavedRequest(JSON.parse(JSON.stringify(fullReq)));
+        })
+        .catch(err => {
+            if (err.name !== 'AbortError') {
+                console.error("Failed to load request details", err);
+            }
+        });
+
+      return () => controller.abort();
+    }
+  }, [selectedId, selectedType, isRequestLoaded, selectedRequest]);
+
   if (loading || !data) {
-      return <div className="flex h-screen items-center justify-center"><Loader2 className="animate-spin" /></div>;
+      return (
+        <div className="flex h-screen items-center justify-center bg-background">
+          <div className="flex flex-col items-center gap-4">
+            <div className="relative">
+              <div className="absolute inset-0 rounded-full bg-primary/20 blur-xl animate-pulse" />
+              <Loader2 className="h-10 w-10 animate-spin text-primary relative" />
+            </div>
+            <p className="text-muted-foreground text-sm">Loading your collection...</p>
+          </div>
+        </div>
+      );
   }
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="flex h-screen overflow-hidden bg-background">
       <Sidebar 
         folders={data.folders || []} 
         selectedId={selectedId}
-        onSelect={(id, type) => { setSelectedId(id); setSelectedType(type); }}
+        onSelect={handleSelect}
         onAddFolder={handleAddFolder}
         onAddRequest={handleAddRequest}
         onDelete={handleDelete}
         onUpdateName={handleUpdateName}
+        onMoveRequest={handleMoveRequest}
+        onImportCurl={handleImportCurl}
+        onExport={handleExport}
+        onImport={handleImport}
+        onOpenEnvironments={() => setEnvManagerOpen(true)}
+        activeEnvironmentName={activeEnvironment?.name}
       />
-      <div className="flex-1 flex flex-col min-w-0 bg-background">
+      <div className="flex-1 flex flex-col min-w-0">
          {selectedType === 'request' && selectedRequest ? (
+             !isRequestLoaded ? (
+                 <div className="flex h-full items-center justify-center">
+                     <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                 </div>
+             ) : (
              <RequestEditor 
                 request={selectedRequest} 
                 onChange={handleUpdateRequest}
                 onRun={() => {}} 
                 onSave={() => handleSaveRequest(selectedRequest)}
+                onSaveExample={(req) => handleSaveRequest(req)}
+                isDirty={isDirty}
              />
+             )
          ) : (
-             <div className="flex h-full items-center justify-center text-muted-foreground">
-                 Select a request to view details
+             <div className="flex h-full items-center justify-center">
+               <div className="text-center space-y-4">
+                 <div className="relative mx-auto w-16 h-16">
+                   <div className="absolute inset-0 rounded-xl bg-gradient-to-br from-primary/20 to-cyan-500/20 blur-xl" />
+                   <div className="relative flex items-center justify-center h-full">
+                     <Zap className="h-8 w-8 text-primary" />
+                   </div>
+                 </div>
+                 <div className="space-y-2">
+                   <h3 className="text-lg font-medium text-foreground">Select a request</h3>
+                   <p className="text-sm text-muted-foreground max-w-xs">
+                     Choose a request from the sidebar to view and edit its details
+                   </p>
+                 </div>
+               </div>
              </div>
          )}
       </div>
+
+      {/* Import cURL Dialog */}
+      <ImportCurlDialog
+        open={importCurlOpen}
+        onOpenChange={setImportCurlOpen}
+        folderId={importCurlFolderId}
+        onImport={handleCurlImported}
+      />
+
+      {/* Environment Manager */}
+      <EnvironmentManager
+        open={envManagerOpen}
+        onOpenChange={setEnvManagerOpen}
+        environments={data.environments || []}
+        activeEnvironmentId={data.activeEnvironmentId || null}
+        onUpdateEnvironments={handleUpdateEnvironments}
+        onSetActiveEnvironment={handleSetActiveEnvironment}
+      />
     </div>
   );
 }

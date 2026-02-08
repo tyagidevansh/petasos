@@ -41,7 +41,7 @@ export async function DELETE(req: NextRequest) {
 export async function PUT(req: NextRequest) {
     try {
         const {
-            id, name, method, url, body,
+            id, name, method, url, body, responseModel, folderId,
             headers, queryParams, responseSchema, examples
         } = await req.json();
 
@@ -53,6 +53,8 @@ export async function PUT(req: NextRequest) {
                 method,
                 url,
                 body,
+                responseModel,
+                folderId, // Allow moving folders
                 headers: {
                     deleteMany: {},
                     create: (headers || []).map((h: any) => ({
