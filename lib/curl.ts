@@ -1,6 +1,61 @@
 import { RequestItem, Header, Param, Folder } from "@/types";
 
 /**
+ * Strip line comments (//) and block comments from a JSON string,
+ * and remove trailing commas. Correctly ignores // inside quoted strings.
+ */
+export function stripJsonComments(jsonStr: string): string {
+  let result = '';
+  let inString = false;
+  let i = 0;
+  while (i < jsonStr.length) {
+    const ch = jsonStr[i];
+    const next = jsonStr[i + 1];
+
+    if (inString) {
+      if (ch === '\\') {
+        // Escaped character — include both chars verbatim
+        result += ch + (jsonStr[i + 1] || '');
+        i += 2;
+        continue;
+      }
+      if (ch === '"') inString = false;
+      result += ch;
+      i++;
+      continue;
+    }
+
+    // Not in a string
+    if (ch === '"') {
+      inString = true;
+      result += ch;
+      i++;
+      continue;
+    }
+
+    // Line comment
+    if (ch === '/' && next === '/') {
+      while (i < jsonStr.length && jsonStr[i] !== '\n') i++;
+      continue;
+    }
+
+    // Block comment
+    if (ch === '/' && next === '*') {
+      i += 2;
+      while (i < jsonStr.length && !(jsonStr[i] === '*' && jsonStr[i + 1] === '/')) i++;
+      i += 2;
+      continue;
+    }
+
+    result += ch;
+    i++;
+  }
+
+  // Remove trailing commas before } or ]
+  return result.replace(/,\s*([}\]])/g, '$1').trim();
+}
+
+/**
  * Convert a RequestItem to a cURL command string
  */
 export function toCurl(request: RequestItem, envVars?: Record<string, string>): string {
@@ -35,7 +90,8 @@ export function toCurl(request: RequestItem, envVars?: Record<string, string>): 
 
     // Body (for POST, PUT, PATCH)
     if (request.body && ['POST', 'PUT', 'PATCH'].includes(request.method)) {
-        const body = interpolateEnvVars(request.body, envVars);
+        const rawBody = interpolateEnvVars(request.body, envVars);
+        const body = stripJsonComments(rawBody);
         // Escape single quotes in body
         const escapedBody = body.replace(/'/g, "'\\''");
         parts.push(`-d '${escapedBody}'`);

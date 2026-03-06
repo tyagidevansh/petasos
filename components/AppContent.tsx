@@ -10,12 +10,27 @@ import { DB, Folder, RequestItem, Environment } from "@/types";
 import { Loader2, Zap } from "lucide-react";
 import { exportCollection, importCollection } from "@/lib/curl";
 
+function loadUIState() {
+  if (typeof window === "undefined")
+    return { selectedId: null, selectedType: null, openFolderIds: [] };
+  try {
+    return JSON.parse(localStorage.getItem("petasos-ui-state") || "{}");
+  } catch {
+    return {};
+  }
+}
+
 export function AppContent() {
   const [data, setData] = React.useState<DB | null>(null);
-  const [selectedId, setSelectedId] = React.useState<string | null>(null);
+  const [selectedId, setSelectedId] = React.useState<string | null>(
+    () => loadUIState().selectedId ?? null,
+  );
   const [selectedType, setSelectedType] = React.useState<
     "folder" | "request" | null
-  >(null);
+  >(() => loadUIState().selectedType ?? null);
+  const [userOpenFolderIds, setUserOpenFolderIds] = React.useState<Set<string>>(
+    () => new Set<string>(loadUIState().openFolderIds ?? []),
+  );
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
 
@@ -67,6 +82,28 @@ export function AppContent() {
         setLoading(false);
       })
       .catch((err) => console.error("Failed to load data", err));
+  }, []);
+
+  // Persist UI state whenever selection or open folders change
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    localStorage.setItem(
+      "petasos-ui-state",
+      JSON.stringify({
+        selectedId,
+        selectedType,
+        openFolderIds: Array.from(userOpenFolderIds),
+      }),
+    );
+  }, [selectedId, selectedType, userOpenFolderIds]);
+
+  const handleToggleFolderOpen = React.useCallback((id: string) => {
+    setUserOpenFolderIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   }, []);
 
   const findRequest = (folders: Folder[], id: string): RequestItem | null => {
@@ -668,6 +705,8 @@ export function AppContent() {
         onOpenGlobalVars={() => setGlobalVarsOpen(true)}
         onPrefetchRequest={handlePrefetchRequest}
         activeEnvironmentName={activeEnvironment?.name}
+        userOpenFolderIds={userOpenFolderIds}
+        onToggleFolderOpen={handleToggleFolderOpen}
       />
       <div className="flex-1 flex flex-col min-w-0">
         {selectedType === "request" && selectedRequest ? (
@@ -683,6 +722,7 @@ export function AppContent() {
               onSave={() => handleSaveRequest(selectedRequest)}
               onSaveExample={(req) => handleSaveRequest(req)}
               isDirty={isDirty}
+              isSaving={saving}
             />
           )
         ) : (

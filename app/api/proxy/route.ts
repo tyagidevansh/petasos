@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { stripJsonComments } from "@/lib/curl";
 
 export async function POST(req: NextRequest) {
     try {
@@ -22,7 +23,13 @@ export async function POST(req: NextRequest) {
         };
 
         if (body && method !== 'GET' && method !== 'HEAD') {
-            options.body = body;
+            const strippedBody = stripJsonComments(body);
+            options.body = strippedBody;
+            // Ensure Content-Type is application/json when sending a body;
+            // the user may not have it in their Headers tab explicitly
+            if (!fetchHeaders.has('content-type')) {
+                fetchHeaders.set('content-type', 'application/json');
+            }
         }
 
         const response = await fetch(url, options);

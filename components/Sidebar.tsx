@@ -47,6 +47,8 @@ interface SidebarProps {
   onOpenGlobalVars: () => void;
   onPrefetchRequest?: (requestId: string) => void;
   activeEnvironmentName?: string;
+  userOpenFolderIds?: Set<string>;
+  onToggleFolderOpen?: (id: string) => void;
 }
 
 const METHOD_COLORS: Record<string, string> = {
@@ -74,6 +76,8 @@ export function Sidebar({
   onOpenGlobalVars,
   onPrefetchRequest,
   activeEnvironmentName,
+  userOpenFolderIds,
+  onToggleFolderOpen,
 }: SidebarProps) {
   const [activeDragId, setActiveDragId] = React.useState<string | null>(null);
   const [mounted, setMounted] = React.useState(false);
@@ -256,6 +260,8 @@ export function Sidebar({
               openFolderIds={openFolderIds}
               searchQuery={searchQuery}
               onPrefetchRequest={onPrefetchRequest}
+              userOpenFolderIds={userOpenFolderIds}
+              onToggleFolderOpen={onToggleFolderOpen}
             />
           ))}
           {folders.length === 0 && (
@@ -300,6 +306,8 @@ interface FolderItemProps {
   openFolderIds?: Set<string> | null;
   searchQuery?: string;
   onPrefetchRequest?: (requestId: string) => void;
+  userOpenFolderIds?: Set<string>;
+  onToggleFolderOpen?: (id: string) => void;
 }
 
 function FolderItem({
@@ -315,9 +323,11 @@ function FolderItem({
   openFolderIds,
   searchQuery,
   onPrefetchRequest,
+  userOpenFolderIds,
+  onToggleFolderOpen,
 }: FolderItemProps) {
-  const [isOpen, setIsOpen] = React.useState(false);
   const searching = !!searchQuery?.trim();
+  const isOpen = userOpenFolderIds?.has(folder.id) ?? false;
   const effectiveIsOpen = searching
     ? (openFolderIds?.has(folder.id) ?? false)
     : isOpen;
@@ -362,7 +372,7 @@ function FolderItem({
         style={{ paddingLeft: `${depth * 12 + 8}px` }}
       >
         <button
-          onClick={() => setIsOpen(!isOpen)}
+          onClick={() => onToggleFolderOpen?.(folder.id)}
           className="mr-1.5 p-0.5 hover:bg-background/50 rounded transition-colors"
         >
           {effectiveIsOpen ? (
@@ -461,6 +471,8 @@ function FolderItem({
               openFolderIds={openFolderIds}
               searchQuery={searchQuery}
               onPrefetchRequest={onPrefetchRequest}
+              userOpenFolderIds={userOpenFolderIds}
+              onToggleFolderOpen={onToggleFolderOpen}
             />
           ))}
           {visibleRequests.map((req) => (
