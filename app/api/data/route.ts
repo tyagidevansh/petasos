@@ -55,7 +55,9 @@ export async function GET() {
             }
         });
 
-        return NextResponse.json({ folders: rootFolders });
+        return NextResponse.json({ folders: rootFolders }, {
+            headers: { 'Cache-Control': 'private, max-age=30, stale-while-revalidate=300' }
+        });
     } catch (error: any) {
         console.error("Failed to fetch data:", error);
         return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });

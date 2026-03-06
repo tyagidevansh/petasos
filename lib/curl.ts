@@ -168,31 +168,126 @@ export function importCollection(jsonString: string): Folder[] {
     try {
         const data = JSON.parse(jsonString);
 
-        // Validate structure
-        if (data.type !== "petasos-collection" || !Array.isArray(data.folders)) {
-            throw new Error("Invalid collection format");
+        // If it's a Petasos export, import as before
+        if (data.type === "petasos-collection" && Array.isArray(data.folders)) {
+            const regenerateIds = (folders: Folder[]): Folder[] => {
+                return folders.map(folder => ({
+                    ...folder,
+                    id: crypto.randomUUID(),
+                    requests: folder.requests.map(req => ({
+                        ...req,
+                        id: crypto.randomUUID(),
+                        headers: req.headers?.map(h => ({ ...h, id: crypto.randomUUID() })) || [],
+                        queryParams: req.queryParams?.map(p => ({ ...p, id: crypto.randomUUID() })) || [],
+                        examples: req.examples?.map(e => ({ ...e, id: crypto.randomUUID() })) || [],
+                    })),
+                    subfolders: regenerateIds(folder.subfolders || []),
+                }));
+            };
+            return regenerateIds(data.folders);
         }
 
-        // Regenerate IDs to avoid conflicts
-        const regenerateIds = (folders: Folder[]): Folder[] => {
-            return folders.map(folder => ({
-                ...folder,
-                id: crypto.randomUUID(),
-                requests: folder.requests.map(req => ({
-                    ...req,
-                    id: crypto.randomUUID(),
-                    headers: req.headers?.map(h => ({ ...h, id: crypto.randomUUID() })) || [],
-                    queryParams: req.queryParams?.map(p => ({ ...p, id: crypto.randomUUID() })) || [],
-                    examples: req.examples?.map(e => ({ ...e, id: crypto.randomUUID() })) || [],
-                })),
-                subfolders: regenerateIds(folder.subfolders || []),
-            }));
-        };
+        // If it's a Postman collection, convert it
+        if (data.info && data.item && Array.isArray(data.item)) {
+            // Recursively convert Postman items to Folder[]
+            const convertItemsToFolders = (items: any[]): Folder[] => {
+                return items.map(item => {
+                    if (item.item && Array.isArray(item.item)) {
+                        // This is a folder
+                        return {
+                            id: crypto.randomUUID(),
+                            name: item.name || "Imported Folder",
+                            requests: convertItemsToRequests(item.item),
+                            subfolders: convertItemsToFolders(item.item.filter((i: any) => i.item && Array.isArray(i.item))),
+                        };
+                    } else {
+                        // This is a request, wrap in a folder
+                        return {
+                            id: crypto.randomUUID(),
+                            name: item.name || "Imported Request",
+                            requests: [convertPostmanRequest(item)],
+                            subfolders: [],
+                        };
+                    }
+                });
+            };
 
-        return regenerateIds(data.folders);
+            // Convert Postman items to RequestItem[]
+            const convertItemsToRequests = (items: any[]): RequestItem[] => {
+                return items
+                    .filter(i => i.request)
+                    .map(convertPostmanRequest);
+            };
+
+            // Convert a single Postman item to RequestItem
+            function convertPostmanRequest(item: any): RequestItem {
+                const req = item.request;
+                // Headers
+                const headers: Header[] = (req.header || []).map((h: any) => ({
+                    id: crypto.randomUUID(),
+                    key: h.key ?? "",
+                    value: h.value ?? "",
+                    enabled: h.disabled !== true,
+                    description: h.description || undefined,
+                }));
+                // Query params
+                let queryParams: Param[] = [];
+                if (req.url && req.url.query) {
+                    queryParams = req.url.query.map((q: any) => ({
+                        id: crypto.randomUUID(),
+                        key: q.key ?? "",
+                        value: q.value ?? "",
+                        enabled: q.disabled !== true,
+                        description: q.description || undefined,
+                    }));
+                }
+                // URL
+                let url = "";
+                if (typeof req.url === "string") {
+                    url = req.url;
+                } else if (req.url && req.url.raw) {
+                    url = req.url.raw;
+                }
+                // Body
+                let body = undefined;
+                if (req.body && req.body.mode === "raw" && typeof req.body.raw === "string") {
+                    body = req.body.raw;
+                }
+                // Method
+                const method = req.method || "GET";
+                return {
+                    id: crypto.randomUUID(),
+                    name: item.name || "Imported Request",
+                    method,
+                    url,
+                    headers,
+                    queryParams,
+                    body,
+                    responseSchema: undefined,
+                    responseModel: undefined,
+                    examples: [],
+                };
+            }
+
+            // Only top-level folders (items with sub-items) are treated as folders
+            const folders = convertItemsToFolders(data.item.filter((i: any) => i.item && Array.isArray(i.item)));
+            // Top-level requests (items without sub-items) are wrapped in a folder
+            const topLevelRequests = data.item.filter((i: any) => i.request);
+            if (topLevelRequests.length > 0) {
+                folders.push({
+                    id: crypto.randomUUID(),
+                    name: "Imported Requests",
+                    requests: topLevelRequests.map(convertPostmanRequest),
+                    subfolders: [],
+                });
+            }
+            return folders;
+        }
+
+        throw new Error("Unrecognized collection format. Only Petasos or Postman v2.1 collections are supported.");
     } catch (e) {
         console.error("Import failed:", e);
-        throw new Error("Failed to parse collection JSON. Make sure it's a valid Petasos export.");
+        throw new Error("Failed to parse collection JSON. Only Petasos or Postman v2.1 collections are supported.");
     }
 }
 

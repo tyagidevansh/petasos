@@ -71,7 +71,9 @@ export async function GET(
             })
         };
 
-        return NextResponse.json(requestItem);
+        return NextResponse.json(requestItem, {
+            headers: { 'Cache-Control': 'private, max-age=300, stale-while-revalidate=3600' }
+        });
 
     } catch (error: any) {
         console.error("Failed to fetch request:", error);

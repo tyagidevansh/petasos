@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 
 export async function POST(req: NextRequest) {
     try {
-        const { id, name, folderId, method, url } = await req.json();
+        const { id, name, folderId, method, url, body, headers, queryParams } = await req.json();
 
         const request = await prisma.request.create({
             data: {
@@ -12,7 +12,23 @@ export async function POST(req: NextRequest) {
                 folderId,
                 method,
                 url: url || "",
-                body: ""
+                body: body || "",
+                headers: headers?.length ? {
+                    create: headers.map((h: any) => ({
+                        key: h.key,
+                        value: h.value,
+                        enabled: h.enabled ?? true,
+                        description: h.description || null,
+                    }))
+                } : undefined,
+                queryParams: queryParams?.length ? {
+                    create: queryParams.map((p: any) => ({
+                        key: p.key,
+                        value: p.value,
+                        enabled: p.enabled ?? true,
+                        description: p.description || null,
+                    }))
+                } : undefined,
             }
         });
 
